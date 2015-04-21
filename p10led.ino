@@ -1,9 +1,11 @@
-#define PIN_OE    2
-#define PIN_A     3
-#define PIN_B     4
-#define PIN_CLK   5
-#define PIN_SCLK  6
-#define PIN_R     7
+#define PIN_OE    2  // white
+#define PIN_A     3  // red
+#define PIN_B     4  // orange
+#define PIN_CLK   5  // yellow
+#define PIN_SCLK  6  // green
+#define PIN_R     7  // blue
+//      PIN_GND         black
+
 #define LED      13
 
 #include <avr/pgmspace.h>
