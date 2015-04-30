@@ -5,15 +5,19 @@
 #define PIN_SCLK  6  // green
 #define PIN_R     7  // blue
 //      PIN_GND         black
+//#define PIN_AUDIO A0
 
 #define LED      13
+//#define SHADES_OF_GRAY
 
-#include <avr/pgmspace.h>
-#include "text.h"
+#define SNAKE_HISTORY 384
+
 
 #define PANELS       11
 #define WIDTH        (PANEL_WIDTH*PANELS)
 #define HEIGHT       (PANEL_HEIGHT)
+
+#define ZOOM      2
 
 // DO NOT CHANGE THESE
 #define ROWS          4
@@ -23,10 +27,17 @@
 #define BYTES_PER_PANEL_PER_ROW       (PIXELS_PER_PANEL_PER_ROW/8)
 #define BYTES_PER_LINE                (WIDTH/8)
 #define SCREENBUF                     (BYTES_PER_LINE*HEIGHT)
+#define VWIDTH    (WIDTH/ZOOM)
+#define VHEIGHT   (HEIGHT/ZOOM)
 
 #define M(x) (1<<((x)&7))
 
+word incomingAudio, previncomingAudio;
+
 #include <TimerOne.h>
+#include <avr/pgmspace.h>
+#include "text.h"
+
 
 __attribute__((always_inline))
 void enable(bool oe) {
@@ -165,7 +176,9 @@ void pixel(bool p) {
 }
 
 byte screenbuf[SCREENBUF] = {};      // LSB
+#if SHADES_OF_GRAY
 byte screenbuf1[SCREENBUF] = {};     // MSB
+#endif
 
 __attribute__((always_inline))
 word getrow(word x, byte y) {
@@ -178,29 +191,70 @@ word getrow(word x, byte y) {
 
 
 __attribute__((always_inline))
-void setpixel(word x, byte y) {
+void _setpixel(word x, byte y) {
   word w = getrow(x, y);
   screenbuf[w] |= M(x);
+#if SHADES_OF_GRAY
   screenbuf1[w] |= M(x);
+#endif
 }
 
+__attribute__((always_inline))
+void setpixel(word x, byte y) {
+  _setpixel(x*ZOOM  , y*ZOOM);
+#if ZOOM == 2
+  _setpixel(x*ZOOM+1, y*ZOOM);
+  _setpixel(x*ZOOM  , y*ZOOM+1);
+  _setpixel(x*ZOOM+1, y*ZOOM+1);
+#endif
+}
+
+#if SHADES_OF_GRAY
 __attribute__((always_inline))
 void setpixel1(word x, byte y) {
   word w = getrow(x, y);
   screenbuf1[w] |= M(x);
 }
+#endif
+
+__attribute__((always_inline))
+void _clearpixel(word x, byte y) {
+  word w = getrow(x, y);
+  screenbuf[w] &= ~M(x);
+#if SHADES_OF_GRAY
+  screenbuf1[w] &= ~M(x);
+#endif
+}
 
 __attribute__((always_inline))
 void clearpixel(word x, byte y) {
-  word w = getrow(x, y);
-  screenbuf[w] &= ~M(x);
-  screenbuf1[w] &= ~M(x);
+  _clearpixel(x*ZOOM  , y*ZOOM);
+#if ZOOM == 2
+  _clearpixel(x*ZOOM+1, y*ZOOM);
+  _clearpixel(x*ZOOM  , y*ZOOM+1);
+  _clearpixel(x*ZOOM+1, y*ZOOM+1);
+#endif
 }
 
 void fire();
 
 void setup() {
   Serial.begin(115200);
+  
+#if PIN_AUDIO
+  cli();
+  ADCSRA = 0;
+  ADCSRB = 0;
+  ADMUX |= (1<<REFS0);
+  ADMUX |= (1<<ADLAR);
+  
+  ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);  // 128 div = ~125kHz
+  ADCSRA |= (1<<ADATE);
+  ADCSRA |= (1<<ADIE);
+  ADCSRA |= (1<<ADEN);
+  ADCSRA |= (1<<ADSC);
+  sei();
+#endif
   
   pinMode(PIN_OE, OUTPUT);
   pinMode(PIN_A, OUTPUT);
@@ -269,6 +323,13 @@ static uint8_t xorshift8() {
     return y8 ^= (y8 << 1);
 }
 
+static uint16_t xorshift16() {
+    static uint16_t y16 = 1;
+    y16 ^= (y16 << 2);
+    y16 ^= (y16 >> 5);
+    return y16 ^= (y16 << 1);
+}
+
 // returns -1, 0 or 1
 static char rand1() {
   byte b = xorshift8();
@@ -333,30 +394,48 @@ void pong() {
 
 __attribute__((always_inline))
 byte getpixel(word x, byte y) {
-  word w = getrow(x,y);
-  byte m = M(x);
-  return !!(screenbuf[w]&m) + ((!!(screenbuf1[w]&m))<<1);
+  word w = getrow(x*ZOOM,y*ZOOM);
+  byte m = M(x*ZOOM);
+  return
+#if SHADES_OF_GRAY
+   ((!!(screenbuf1[w]&m))<<1) +
+#endif
+    !!(screenbuf[w]&m);
 }
+
 __attribute__((always_inline))
-void setpixel(word x, byte y, byte b) {
+void _setpixel(word x, byte y, byte b) {
   word w = getrow(x, y);
   byte m = M(x);
   if (b&1)
     screenbuf[w] |= m;
   else
     screenbuf[w] &= ~m;
+#if SHADES_OF_GRAY
   if (b&2)
     screenbuf1[w] |= m;
   else
     screenbuf1[w] &= ~m;
+#endif
+}
+
+
+__attribute__((always_inline))
+void setpixel(word x, byte y, byte b) {
+  _setpixel(x*ZOOM  , y*ZOOM,   b);
+#if ZOOM == 2
+  _setpixel(x*ZOOM+1, y*ZOOM,   b);
+  _setpixel(x*ZOOM  , y*ZOOM+1, b);
+  _setpixel(x*ZOOM+1, y*ZOOM+1, b);
+#endif
 }
 
 void fire() {
   static bool l;
   digitalWrite(LED, l = !l);
 
-  for(char y=0; y<HEIGHT; ++y) {
-    for(word x=0; x<WIDTH; ++x) {
+  for(char y=0; y<VHEIGHT; ++y) {
+    for(word x=0; x<VWIDTH; ++x) {
       setpixel(x, y, y>>2); 
     }
   }
@@ -365,6 +444,119 @@ void fire() {
 void show0() {
 //  pong();
 }
+
+void snake() {
+  static int px, py;
+  static bool hascookie = false;
+  if (!hascookie) {
+    // no cookie; make one at a random position
+    px = xorshift8() % VWIDTH;
+    py = xorshift8() % VHEIGHT;
+ #if VWIDTH > 256
+    // center the cookie in the middle
+    px += (VWIDTH - 256)/2;
+ #endif
+    setpixel(px, py);
+    hascookie = true;
+  }
+  
+  static int x, y;
+  static char dx=1, dy;
+
+  static int first, last;
+  static struct { word x:12, y:4; } history[SNAKE_HISTORY];
+  
+  // random command for demo mode 
+  char cmd = xorshift16();
+ 
+  if (incomingAudio > 100)
+    incomingAudio = ',';
+   
+  if (Serial.available())
+  {
+    cmd = Serial.read();
+  }
+  
+  // with a little help from my friends
+  if ((x == px || y == py) && !(x+dx==px || y+dy==py)) cmd = '.';
+  
+  char o;
+  switch (cmd)
+  {
+  //case '<':
+  case ',':
+    if (x-dy<0 || x-dy>=VWIDTH || y+dx<0 || y+dx>=VHEIGHT) break;
+   // right: 0,1 => -1,0; 0,-1 => 1,0; 1,0 => 0,1; -1,0 => 0,-1
+    o=dx; dx=-dy; dy=o;
+    break;
+  //case '>':
+  case '.': 
+    // left: 0,1 => 1,0; 0,-1 => -1,0; 1,0 => 0,-1; -1,0 => 0,1
+    if (x+dy<0 || x+dy>=VWIDTH || y-dx<0 || y-dx>=VHEIGHT) break;
+    o=dx; dx=dy; dy=-o;
+    break;
+/*  
+  case 'w': dx=0; dy=1; break;
+  case 's': dx=0; dy=-1; break;
+  case 'a': dx=1; dy=0; break;
+  case 'd': dx=-1; dy=0; break;
+  case 'q': if (--first<0) first=H-1; break;
+*/
+  }
+    
+  if (first != last)
+  {
+    // clear the old pixel
+    clearpixel(history[first].x, history[first].y);
+    if (++first == SNAKE_HISTORY)
+      first = 0;
+    // keep the old pixel if the snake is too short
+    if (first == 1 && last < 15)
+      first = 0;
+  }
+
+  x += dx;
+  y += dy;  
+  
+  // force a left or right turn when running into the edge
+  if (x<0) { x=0; dx=0; if (y<VHEIGHT/2) dy=1; else dy=-1; y+=dy; }
+  else if (x>=VWIDTH) { x = VWIDTH-1; dx=0; if (y<VHEIGHT/2) dy=1; else dy=-1; y+=dy; }
+  
+  if (y<0) { y=0; dy=0; if (x<VWIDTH/2) dx=1; else dx=-1; x+=dx; }
+  else if (y>=VHEIGHT) {y = VHEIGHT-1; dy=0; if (x<VWIDTH/2) dx=1; else dx=-1; x+=dx; }
+
+  // is the pixel already set?  
+  if (getpixel(x,y)) {
+    // did we eat the cookie?
+    if (x == px && y == py) {
+      // keep one more pixel (the last one) in the history
+      if (--first<0) first=SNAKE_HISTORY-1;
+      // create a new cookie
+      hascookie = false;
+    }
+    else {
+      // delete the whole snake
+      while (first != last) {
+        // clear the old pixel
+        clearpixel(history[first].x, history[first].y);
+        if (++first == SNAKE_HISTORY)
+          first = 0;
+        // update the screen (animate the deletion)
+        for (int t=0; t<10; ++t)
+          show(screenbuf, 1000);
+      }
+    }
+  }
+  
+  // Set the new pixel
+  setpixel(x, y);
+  
+  // track history for the snake points
+  history[last].x = x;
+  history[last].y = y;
+  if (++last == SNAKE_HISTORY) last=0;
+}
+
 
 void loop() {
 /*  
@@ -410,64 +602,23 @@ void loop() {
   //    screenbuf[s] = xorshift8();  
   //for (word x=0; x<WIDTH; ++x)
     //setpixel(x, xorshift8()&15);
+
   //pong();
+  snake();
 
-  static int px, py;
-  static bool hascookie = false;
-  if (!hascookie) {
-    px = xorshift8()+50;
-    py = xorshift8()&15;
-    setpixel(px, py);
-    hascookie = true;
-  }
-  
-  static int x, y;
-  static char dx, dy;
+  // update the screenbuffer
+  show(screenbuf, 1000);
+#if SHADES_OF_GRAY
+  show(screenbuf1, 20);
+#endif
 
-  static int first, last;
-  struct P { word x,y;};
-  const int H=100;
-  static P history[H];
-  
-  if (first!=last)
-  {
-    clearpixel(history[first].x,history[first].y);
-    if (++first == H)
-      first = 0;
-  }
+  //Serial.println(incomingAudio);
+}
 
-  x += dx;
-  y += dy;  
-  
-  if (x<0) { x=0; dx=0; if (y<HEIGHT/2) dy=1; else dy=-1; y+=dy; }
-  else if (x>=WIDTH) { x = WIDTH-1; dx=0; if (y<HEIGHT/2) dy=1; else dy=-1; y+=dy; }
-  
-  if (y<0) { y=0; dy=0; if (x<WIDTH/2) dx=1; else dx=-1; x+=dx; }
-  else if (y>=HEIGHT) {y = HEIGHT-1; dy=0; if (x<WIDTH/2) dx=1; else dx=-1; x+=dx; }
 
-  history[last].x = x;
-  history[last].y = y;
-  if (++last == H) last=0;
-  setpixel(x, y);
-  
-  if (x == px && y == py) {
-    if (--first<0) first=H-1;
-    hascookie = false;
-  }
-  
-  if (Serial.available())
-  {
-    switch (Serial.read())
-    {
-    case 'w': dx=0; dy=1; break;
-    case 's': dx=0; dy=-1; break;
-    case 'a': dx=1; dy=0; break;
-    case 'd': dx=-1; dy=0; break;
-    case 'q': if (--first<0) first=H-1; break;
-    }
-  }
-  
-  show(screenbuf, 20);
-  show(screenbuf1, 1000);
+ISR(ADC_vect) {
+  previncomingAudio = incomingAudio;
+  incomingAudio = ADCH + previncomingAudio;    // pmf
+  //incomingAudio += previncomingAudio;
 }
 
