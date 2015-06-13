@@ -1,23 +1,24 @@
 #define PIN_OE    2  // white
 #define PIN_A     3  // red
 #define PIN_B     4  // orange
-#define PIN_CLK   5  // yellow
+//#define PIN_CLK   5  // yellow
+#define PIN_CLK   8  // yellow (PORTB)
 #define PIN_SCLK  6  // green
 #define PIN_R     7  // blue
 //      PIN_GND         black
 //#define PIN_AUDIO A0
 
-#define LED      13
+#define DIMNESS   9
+#define LED       13
+#define USE_TIMER1 2000
 //#define SHADES_OF_GRAY
 
-#define SNAKE_HISTORY 384
-
+#define SNAKE_HISTORY 64
 
 #define PANELS       11
 #define WIDTH        (PANEL_WIDTH*PANELS)
 #define HEIGHT       (PANEL_HEIGHT)
-
-#define ZOOM      2
+#define ZOOM         2
 
 // DO NOT CHANGE THESE
 #define ROWS          4
@@ -27,21 +28,27 @@
 #define BYTES_PER_PANEL_PER_ROW       (PIXELS_PER_PANEL_PER_ROW/8)
 #define BYTES_PER_LINE                (WIDTH/8)
 #define SCREENBUF                     (BYTES_PER_LINE*HEIGHT)
-#define VWIDTH    (WIDTH/ZOOM)
-#define VHEIGHT   (HEIGHT/ZOOM)
+#define VWIDTH                        (WIDTH/ZOOM)
+#define VHEIGHT                       (HEIGHT/ZOOM)
 
 #define M(x) (1<<((x)&7))
+#define PORT(pin) ((pin)>7?((pin)>13?PORTC:PORTB):PORTD)
 
 word incomingAudio, previncomingAudio;
 
 #include <TimerOne.h>
 #include <avr/pgmspace.h>
-#include "text.h"
+#include "cat1.h"
+#include "cat2.h"
+#include "fish1.h"
+#include "hex.h"
 
+#include "sinus.h"
+char sinus(byte p) { return pgm_read_byte(sinus_table + (p&63)); }
 
 __attribute__((always_inline))
 void enable(bool oe) {
-  asm volatile
+/*  asm volatile
   (
     "cbi  %[port], %[pinoe]"          "\n\t"
     "cpse %[oe], 0"                   "\n\t"
@@ -51,7 +58,8 @@ void enable(bool oe) {
     [port] "I" ( _SFR_IO_ADDR(PORTD) ),
     [pinoe] "I" ( PIN_OE )
   );
-  //digitalWrite(PIN_OE, oe);
+*/  
+  digitalWrite(PIN_OE, oe);
 }
 
 #define DELAY //"rjmp .+0\n\t"
@@ -84,70 +92,70 @@ void set_row(byte row) {
   //digitalWrite(PIN_SCLK, HIGH);
 }
 
+#if PIN_CLK >= 8
+# define CLOCK                                \
+    "out  %[cport], %[clk0]"           "\n\t" \
+    DELAY                                     \
+    "out  %[cport], %[clk1]"           "\n\t"
+#else
+# define CLOCK                                \ 
+    "cbi  %[cport], %[clk]"            "\n\t" \
+    DELAY                                     \
+    "sbi  %[cport], %[clk]"            "\n\t"
+#endif
+
 __attribute__((noinline))
 void pixels(byte p) {
+  // TODO: replace all cbi/sbi with out
   asm volatile
   (
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 0"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 1"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
-
+    CLOCK
+    
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 2"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 3"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 4"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 5"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 6"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
 
     "cbi  %[port], %[r]"             "\n\t"
     "sbrs %[p], 7"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
-    DELAY
+    CLOCK
   ::
     [p] "r" (p),
     [port] "I" ( _SFR_IO_ADDR(PORTD) ),
-    [clk] "I" ( PIN_CLK ),
-    [r] "I" ( PIN_R )
+    [cport] "I" ( _SFR_IO_ADDR(PORT(PIN_CLK)) ),
+    [r] "I" ( PIN_R ),
+    [clk0] "r" ( ~(1<<(PIN_CLK&7)) ),
+    [clk1] "r" ( ~0 ),
+    [clk] "I" ( PIN_CLK&7 )
   ); 
   //digitalWrite(PIN_R, p);
   //digitalWrite(PIN_CLK, LOW);
@@ -161,23 +169,29 @@ void pixel(bool p) {
     "cbi  %[port], %[r]"             "\n\t"
     "cpse %[p], 0"                   "\n\t"
     "sbi  %[port], %[r]"             "\n\t"
-    "cbi  %[port], %[clk]"           "\n\t"
-    //"nop"                            "\n\t"
-    "sbi  %[port], %[clk]"           "\n\t"
+    "out  %[cport], %[clk0]"           "\n\t"
+    DELAY
+    "out  %[cport], %[clk1]"           "\n\t"
   ::
     [p] "r" (p),
     [port] "I" ( _SFR_IO_ADDR(PORTD) ),
-    [clk] "I" ( PIN_CLK ),
-    [r] "I" ( PIN_R )
+    [cport] "I" ( _SFR_IO_ADDR(PORT(PIN_CLK)) ),
+    [r] "I" ( PIN_R ),
+    [clk0] "r" ( ~(1<<(PIN_CLK&7)) ),
+    [clk1] "r" ( ~0 )
   ); 
   //digitalWrite(PIN_R, p);
   //digitalWrite(PIN_CLK, LOW);
   //digitalWrite(PIN_CLK, HIGH);
 }
 
-byte screenbuf[SCREENBUF] = {};      // LSB
+//byte* volatile screenbuf;
+//byte* volatile frontbuf;
+byte screenbuf[SCREENBUF] = {};      // MSB
+byte frontbuf[SCREENBUF] = {};
+
 #if SHADES_OF_GRAY
-byte screenbuf1[SCREENBUF] = {};     // MSB
+byte screenbuf1[SCREENBUF] = {};     // LSB
 #endif
 
 __attribute__((always_inline))
@@ -239,6 +253,9 @@ void clearpixel(word x, byte y) {
 void fire();
 
 void setup() {
+  //screenbuf = _screenbuf;
+  //frontbuf = _frontbuf;
+  
   Serial.begin(115200);
   
 #if PIN_AUDIO
@@ -268,32 +285,167 @@ void setup() {
   digitalWrite(PIN_SCLK, HIGH);
   digitalWrite(PIN_CLK, HIGH);
   digitalWrite(PIN_OE, HIGH);
- 
-  Timer1.initialize(5000);
+
+#if USE_TIMER1
+  Timer1.initialize(USE_TIMER1);
   Timer1.attachInterrupt(&show0);
-  //timer.start();
+#endif
+}
 
-  //for (int t=0;t<SCREENBUF;++t)
-  //  screenbuf[t] = 0xff;
-/*  
-  word p=100;
-  for(char y=HEIGHT-1;y>=0;--y) {
-    for (int x=WIDTH-1;x>=0;--x) {
-      if (pgm_read_byte(japanese_raw + p))
-        setpixel(x,y);
-      p+=2;
+
+void clearscreen()
+{
+   memset(screenbuf, 0, SCREENBUF);
+#if SHADES_OF_GRAY
+   memset(screenbuf1, 0, SCREENBUF);
+#endif
+}
+
+static word T;
+
+void cat1()
+{
+  int m = sinus(T++);
+  clearscreen();
+  showbmp(cat1_bmp, 352, 0);
+  // tail:
+  for (int x=0; x<256; ++x) {
+    byte y = (sinus(x)*m)/(16*128) + 7;
+    _setpixel(x+47, y);
+    _setpixel(x+47, y+1);
+  }
+}
+
+void cat2()
+{
+//  clearscreen();
+//  showbmp(cat2_bmp, 352, T++);//buggy, but Toru likes it
+  static byte YY=0, DY = 1;
+  YY += DY;
+  if (YY == 16) DY = -1;
+  else if (YY == 0) DY = 1;
+    
+  byte DDY = 128 / YY;
+
+  clearscreen();
+  byte Y = 0;
+  const word stride = 352/8;
+  for(char y=0;y<HEIGHT;++y) {
+    if (y == YY) {
+      DDY = 128 / (16 - YY);
+      Y = 0;
     }
-  }*/
+    byte b = 128>>0;//(p&7);
+    word pp = (Y>>3) * stride;
+    for (int x=WIDTH-1;x>=0;) {
+      byte bits = pgm_read_byte(cat2_bmp + pp++);
+      for (byte bb=b; bb; bb>>=1) {
+        if (bits&bb)
+          _setpixel(x,y);
+        x--;
+      }
+      b=128;
+    }//for x
+    Y += DDY;
+  }
+  delay(10);    
 }
 
-/*
-void set_pixel(word x, word y) {
-  byte panel = x / PIXELS_PER_ROW;
-  byte row = y&3;
-  byte yy = y>>2;
-  screenbuf[panel>>3] |= 1<<(panel&7);
+void hex()
+{
+  if (T++ == 0) {
+    clearscreen();
+    showbmp(hex_bmp, 352, 0);
+  }
+  delay(10);
 }
-*/
+
+void fish1()
+{
+  clearscreen();
+  showbmpwave(fish1_bmp, 352/8, T++, true);
+}
+
+void showbmpx(const byte* pgm, word stride, int p, bool swap)
+{
+  const byte b = 128>>(p&7);
+  word row = 0;
+  for(char y=0;y<HEIGHT;++y) {
+    int pp = p/8;
+    byte bb = b;
+    for (int x=WIDTH-1;x>=0;bb=128) {
+      if (pp < 0) {
+        x-=8;
+        pp++;
+        continue;
+      }
+      if (pp >= stride) {
+        if (swap) pp -= stride;
+        else break;
+      }
+      byte bits = pgm_read_byte(pgm + row + pp++);
+      for (; bb; bb>>=1) {
+        if (bits&bb)
+          _setpixel(x,y);
+        if (--x<0)
+          break;
+      }// for bb
+    }//for x
+    row+=stride;
+  }// for y
+}
+
+
+void showbmpwave(const byte* pgm, word stride, int p, bool swap)
+{
+  const byte b = 128>>(p&7);
+  word row = 0;
+  for(char y=0;y<HEIGHT;++y) {
+    int pp = p/8;
+    byte bb = b;
+    for (int x=WIDTH-1;x>=0;bb=128) {
+      if (pp < 0) {
+        x-=8;
+        pp++;
+        continue;
+      }
+      if (pp >= stride) {
+        if (swap) pp -= stride;
+        else break;
+      }
+      char yofs = sinus(x)/100;
+      byte bits = pgm_read_byte(pgm + row + pp++);
+      for (; bb; bb>>=1) {
+        if (bits&bb)
+          _setpixel(x,y+yofs);
+        if (--x<0)
+          break;
+      }// for bb
+    }//for x
+    row+=stride;
+  }// for y
+}
+
+
+
+void showbmp(const byte* pgm, int stride, word p)
+{
+  for(char y=0;y<HEIGHT;++y) {
+    byte b = 128>>(p&7);
+    word pp = p/8;
+    for (int x=WIDTH-1;x>=0;) {
+      byte bits = pgm_read_byte(pgm + pp++);
+      for (byte bb=b; bb; bb>>=1) {
+        if (bits&bb)
+          _setpixel(x,y);
+        x--;
+      }
+      b=128;
+    }
+    p+=stride;
+  }
+}
+
 
 #define PONG_PADLEN 5
 
@@ -350,9 +502,9 @@ void show(byte *sb, word d) {
 
     set_row(row);    
     
-    enable(true);
-    delayMicroseconds(d);
     enable(false);
+    delayMicroseconds(d);
+    enable(true);
   }//row  
 }
 
@@ -363,31 +515,32 @@ void show(byte *sb, word d) {
   11  3
 */
 
-void pong() {
-  #define SUB 2
+void pong(bool clearing) {
+  #define SUB 4
   
-  static int yy = 10;
-  static int xx = 10;
+  static int yy = VWIDTH*SUB/2;
+  static int xx = VHEIGHT*SUB/2;
   static char dx = SUB;
   static char dy = 1;
   
-  static int p1y=8;
-  static int p2y=8;
+  static int p1y=WIDTH/2;
+  static int p2y=WIDTH/2;
   
   pong_drawPad(0, p1y, false);  
   pong_drawPad(WIDTH-1, p2y, false);  
-  p1y = yy/SUB;
-  p2y = yy/SUB;
+  p1y = ZOOM*yy/SUB;
+  p2y = ZOOM*yy/SUB;
   pong_drawPad(0, p1y, true);  
   pong_drawPad(WIDTH-1, p2y, true); 
 
-  clearpixel(xx/SUB, yy/SUB);
+  if (clearing) 
+    clearpixel(xx/SUB, yy/SUB);
   xx += dx;
   yy += dy;
   if (xx < 0) { xx = -xx; dx = -dx; dy += rand1(); }
-  else if (xx >= WIDTH*SUB) { xx = (WIDTH*SUB-1)*2 - xx; dx = -dx; dy += rand1(); }
+  else if (xx >= VWIDTH*SUB) { xx = (VWIDTH*SUB-1)*2 - xx; dx = -dx; dy += rand1(); }
   if (yy < 0) { yy = -yy; dy = -dy; }
-  else if (yy >= HEIGHT*SUB) { yy = (HEIGHT*SUB-1)*2 - yy; dy = -dy; }
+  else if (yy >= VHEIGHT*SUB) { yy = (VHEIGHT*SUB-1)*2 - yy; dy = -dy; }
   setpixel(xx/SUB, yy/SUB);
 }
 
@@ -442,10 +595,33 @@ void fire() {
 }
 
 void show0() {
-//  pong();
+  static byte row = 0;
+  static word z=0;
+  
+  enable(false);
+
+  if (++row >= ROWS) {
+    // Skip cycles depending on the brightness/dimness
+    if (row < (ROWS+DIMNESS))
+      return;
+    row = 0;
+    z = 0;
+  }
+
+  for (byte y = 0; y < PANELS*PANEL_HEIGHT/ROWS; ++y) {
+      // Write PANEL_WIDTH pixels:
+      pixels(frontbuf[z++]);
+      pixels(frontbuf[z++]);
+      pixels(frontbuf[z++]);
+      pixels(frontbuf[z++]);
+  }
+
+  set_row(row);    
+  enable(true);
+  
 }
 
-void snake() {
+void snake(bool clearing) {
   static int px, py;
   static bool hascookie = false;
   if (!hascookie) {
@@ -534,6 +710,10 @@ void snake() {
       // create a new cookie
       hascookie = false;
     }
+    else if (clearing) {
+      // keep one more pixel (the last one) in the history
+      if (--first<0) first=SNAKE_HISTORY-1;
+    }
     else {
       // delete the whole snake
       while (first != last) {
@@ -559,6 +739,7 @@ void snake() {
 
 
 void loop() {
+  
 /*  
   #define SUB 64
   static int mx;
@@ -603,13 +784,40 @@ void loop() {
   //for (word x=0; x<WIDTH; ++x)
     //setpixel(x, xorshift8()&15);
 
-  //pong();
-  snake();
 
+  static char state=0;
+  static unsigned long ms;
+  if (millis() - ms > 30000) {
+    ms = millis();
+    state++;
+    T=0;
+  }
+  switch (state)
+  {
+  case 0: hex(); break;
+  case 1: snake(true); delay(10); break;
+  case 2: cat1(); break;
+  case 3: pong(false); delay(10); break;
+  case 4: fish1(); break;
+  case 5: cat2(); break;
+  case 6: pong(true); delay(10); break;
+  default:
+    state = 0;
+  }
+  
+#if USE_TIMER1
+  //byte* old = screenbuf;
+  //screenbuf = frontbuf;
+  cli();
+  //frontbuf = old;
+  memcpy(frontbuf, screenbuf, SCREENBUF);
+  sei();
+#else
   // update the screenbuffer
   show(screenbuf, 1000);
-#if SHADES_OF_GRAY
+# if SHADES_OF_GRAY
   show(screenbuf1, 20);
+# endif
 #endif
 
   //Serial.println(incomingAudio);
@@ -621,4 +829,32 @@ ISR(ADC_vect) {
   incomingAudio = ADCH + previncomingAudio;    // pmf
   //incomingAudio += previncomingAudio;
 }
+
+
+
+/*
+int blah;
+ISR(ADC_vect) {
+  blah = ADCL;
+  blah += (ADCH<<8);
+}
+
+
+
+  Serial.begin(115200);
+  
+  cli();
+  ADCSRA = 0;
+  ADCSRB = 0;
+  ADMUX = 0;
+  ADMUX |= (1<<REFS0);  // AVcc
+  //ADMUX |= (1<<ADLAR);  // left align
+  
+  ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);
+  ADCSRA |= (1<<ADATE); // auto-trigger
+  ADCSRA |= (1<<ADIE);  // interrupt enable
+  ADCSRA |= (1<<ADEN);  // enable ADC
+  ADCSRA |= (1<<ADSC);  // reset/start conversion
+  sei();
+*/
 
