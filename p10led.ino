@@ -8,9 +8,9 @@
 //      PIN_GND         black
 //#define PIN_AUDIO A0
 
-#define DIMNESS   9
+#define DIMNESS   8
 #define LED       13
-#define USE_TIMER1 2000
+#define USE_TIMER1 1800
 //#define SHADES_OF_GRAY
 
 #define SNAKE_HISTORY 64
@@ -808,10 +808,10 @@ void loop() {
 #if USE_TIMER1
   //byte* old = screenbuf;
   //screenbuf = frontbuf;
-  cli();
+  //cli();
   //frontbuf = old;
   memcpy(frontbuf, screenbuf, SCREENBUF);
-  sei();
+  //sei();
 #else
   // update the screenbuffer
   show(screenbuf, 1000);
