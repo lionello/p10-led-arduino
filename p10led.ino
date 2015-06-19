@@ -6,14 +6,15 @@
 #define PIN_SCLK  6  // green
 #define PIN_R     7  // blue
 //      PIN_GND         black
-//#define PIN_AUDIO A0
+#define PIN_AUDIO A0
 
-#define DIMNESS   8
+#define DIMNESS   4
 #define LED       13
 #define USE_TIMER1 1800
 //#define SHADES_OF_GRAY
+#define DC_LEVEL  1
 
-#define SNAKE_HISTORY 64
+#define SNAKE_HISTORY 32
 
 #define PANELS       11
 #define WIDTH        (PANEL_WIDTH*PANELS)
@@ -34,7 +35,8 @@
 #define M(x) (1<<((x)&7))
 #define PORT(pin) ((pin)>7?((pin)>13?PORTC:PORTB):PORTD)
 
-word incomingAudio, previncomingAudio;
+volatile int lastAudio = 0;
+byte incomingAudio[WIDTH] = {};
 
 #include <TimerOne.h>
 #include <avr/pgmspace.h>
@@ -258,17 +260,18 @@ void setup() {
   
   Serial.begin(115200);
   
-#if PIN_AUDIO
+#ifdef PIN_AUDIO  
   cli();
   ADCSRA = 0;
   ADCSRB = 0;
-  ADMUX |= (1<<REFS0);
-  ADMUX |= (1<<ADLAR);
+  //ADMUX |= (1<<REFS0);//AVcc
+  ADMUX &= ~(3<<REFS0);//AREF
+  ADMUX |= (1<<ADLAR);//left align
   
-  ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);  // 128 div = ~125kHz
+  ADCSRA |= (1<<ADPS2)|(1<<ADPS0)|(1<<ADPS1);  // 128 div = ~125kHz
   ADCSRA |= (1<<ADATE);
-  ADCSRA |= (1<<ADIE);
-  ADCSRA |= (1<<ADEN);
+  ADCSRA |= (1<<ADIE);//interrupt enable
+  ADCSRA |= (1<<ADEN);//enable
   ADCSRA |= (1<<ADSC);
   sei();
 #endif
@@ -643,11 +646,15 @@ void snake(bool clearing) {
   static struct { word x:12, y:4; } history[SNAKE_HISTORY];
   
   // random command for demo mode 
-  char cmd = xorshift16();
+  char cmd = 0;
  
-  if (incomingAudio > 100)
-    incomingAudio = ',';
-   
+#ifdef PIN_AUDIO
+  if (lastAudio > 800)
+    cmd = ',';
+#else
+  cmd = xorshift16();
+#endif
+
   if (Serial.available())
   {
     cmd = Serial.read();
@@ -778,13 +785,25 @@ void loop() {
       setpixel1(mx/SUB, my/SUB);
   }*/
   
-  //memset(screenbuf, 0, SCREENBUF);
-  //for (int s=0; s<SCREENBUF; ++s)
-  //    screenbuf[s] = xorshift8();  
-  //for (word x=0; x<WIDTH; ++x)
-    //setpixel(x, xorshift8()&15);
-
-
+  clearscreen();
+  /*if (lastAudio > 10000)
+  {
+    for (int s=0; s<SCREENBUF; ++s)
+        screenbuf[s] = xorshift8();  
+    //for (word x=0; x<WIDTH; ++x)
+      //setpixel(x, xorshift8()&15);
+  }
+  else*/
+  {
+    for (word xx=0; xx<WIDTH; ++xx)
+    {
+      char i = incomingAudio[xx];
+      byte yy = 8 - i/2;
+      for (byte s=0; s<i;++s)
+        _setpixel(xx, yy+s);
+    }
+  }
+/*
   static char state=0;
   static unsigned long ms;
   if (millis() - ms > 30000) {
@@ -804,7 +823,8 @@ void loop() {
   default:
     state = 0;
   }
-  
+*/
+
 #if USE_TIMER1
   //byte* old = screenbuf;
   //screenbuf = frontbuf;
@@ -825,36 +845,24 @@ void loop() {
 
 
 ISR(ADC_vect) {
-  previncomingAudio = incomingAudio;
-  incomingAudio = ADCH + previncomingAudio;    // pmf
-  //incomingAudio += previncomingAudio;
-}
-
-
-
-/*
-int blah;
-ISR(ADC_vect) {
-  blah = ADCL;
-  blah += (ADCH<<8);
-}
-
-
-
-  Serial.begin(115200);
+  static byte prev = 0;
+  static word xx = 0;
   
-  cli();
-  ADCSRA = 0;
-  ADCSRB = 0;
-  ADMUX = 0;
-  ADMUX |= (1<<REFS0);  // AVcc
-  //ADMUX |= (1<<ADLAR);  // left align
+  byte v = ADCH;
   
-  ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0);
-  ADCSRA |= (1<<ADATE); // auto-trigger
-  ADCSRA |= (1<<ADIE);  // interrupt enable
-  ADCSRA |= (1<<ADEN);  // enable ADC
-  ADCSRA |= (1<<ADSC);  // reset/start conversion
-  sei();
-*/
+  // low-pass
+  byte val = (v + prev)/2;
+  prev = v;
+
+#if DC_LEVEL
+  // denoise
+  if (val < DC_LEVEL) val = DC_LEVEL;
+  val -= DC_LEVEL;
+#endif
+
+  lastAudio += incomingAudio[xx] = val;
+  
+  if (++xx == WIDTH) { xx = 0; }
+  lastAudio -= incomingAudio[xx];
+}
 
