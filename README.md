@@ -6,6 +6,7 @@ Arduino project that shows how to drive a P10 LED screen in different ways. The 
 * Using Timer1 to drive the display versus "loop()"
 * Different mini game implementations: Snake, Pong
 * 64-byte sine/cosine table
+* Sampling AUX-level audio https://www.youtube.com/watch?v=M0RNVcwk8RA
 
 This particular code was made to run on an Arduino UNO, attached to a 11 panel P10 LED banner, resulting in a 352x16 LED screen.
 
